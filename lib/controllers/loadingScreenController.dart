@@ -21,7 +21,6 @@ class Loadingscreencontroller extends GetxController {
     toName = args['name'];
     self = storage.user!;
     
-    ws.setData(toPhone);
     sendOffer();
   }
 

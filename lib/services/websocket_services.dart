@@ -6,7 +6,7 @@ import 'package:videocall_app/controllers/storageService.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 class WebsocketServices extends GetxController {
-  late String? toPhone;
+  String? toPhone;
 
   // String url = "//ec1b-2409-40c0-51-756f-29d0-c889-62ad-b080.ngrok-free.app";
   Appconfig wsUrl = Appconfig();
@@ -71,12 +71,13 @@ class WebsocketServices extends GetxController {
 
   void setData(String to){
      toPhone = to;
+     print("tophone is set $toPhone");
   }
 
   void messages(dynamic data) {
     final decoded = jsonDecode(data);
 
-    print("received: $decoded");
+    // print("received: $decoded");
 
     switch (decoded['type']) {
       case 'connected':
@@ -114,6 +115,9 @@ class WebsocketServices extends GetxController {
 
   //sendOffer to Other User
   Future<void> createAndSendOffer(from, to) async {
+
+    toPhone = to;
+    
     // Create offer
     var offer = await peerConnection.createOffer();
 
@@ -176,6 +180,8 @@ class WebsocketServices extends GetxController {
   Future<void> handleCandidate(Map<String, dynamic> data) async {
     try {
       final candidateMap = data['candidate'];
+
+      print("handleCandidate: $candidateMap");
 
       RTCIceCandidate candidate = RTCIceCandidate(
         candidateMap['candidate'],

@@ -4,7 +4,6 @@ import 'package:videocall_app/controllers/storageService.dart';
 // import 'package:videocall_app/services/websocket_services.dart';
 
 class Videocallcontroller extends GetxController {
-  // final ws = Get.find<WebsocketServices>();
 
 
   @override
