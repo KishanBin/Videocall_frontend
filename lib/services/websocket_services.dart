@@ -6,87 +6,49 @@ import 'package:videocall_app/controllers/storageService.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 class WebsocketServices extends GetxController {
-  String? toPhone;
+  final Appconfig wsUrl = Appconfig();
+  final storage = Get.find<StorageService>();
 
-  // String url = "//ec1b-2409-40c0-51-756f-29d0-c889-62ad-b080.ngrok-free.app";
-  Appconfig wsUrl = Appconfig();
+  late WebSocketChannel socket;
+  late Map<String, dynamic> self;
+  RTCPeerConnection? peerConnection;
 
-  late WebSocketChannel socket = WebSocketChannel.connect(
-    Uri.parse("wss:${wsUrl.serverUrl}"),
-  );
-
-  //it Discover public IP
   final Map<String, dynamic> config = {
     'iceServers': [
       {'urls': 'stun:stun.l.google.com:19302'},
     ],
   };
 
-  late RTCPeerConnection peerConnection;
-
-  var storage = Get.find<StorageService>();
-
-  late Map<String, dynamic> self;
-
   @override
-  onInit() async {
+  void onInit() {
     super.onInit();
 
-    self = storage.user!;
-
-    peerConnection = await createPeerConnection(config);
-
-    //start block
-    peerConnection.onIceCandidate = (RTCIceCandidate candidate) {
-      if (candidate.candidate == null || toPhone == null) return;
-
-      final icePayload = {
-        "type": "candidate",
-        "from": self['phone'],
-        "to": toPhone, // ⚠️ set dynamically (see note below)
-        "candidate": candidate.toMap(),
-      };
-
-      socket.sink.add(jsonEncode(icePayload));
-      print("📤 ICE candidate sent");
-    };
-    // End Block
-
-    
-
+    if (storage.user != null) {
+      self = storage.user!;
+    }
     try {
+      socket = WebSocketChannel.connect(Uri.parse("wss:${wsUrl.serverUrl}"));
+
       socket.stream.listen(
         messages,
-        onError: (error) {
-          print("Websocket error: $error");
-        },
-        onDone: () {
-          print("Websocket Connection is Closed!");
-        },
+        onError: (error) => print("WebSocket error: $error"),
+        onDone: () => print("WebSocket closed"),
       );
     } catch (e) {
-      print("Error: $e");
+      print("Error $e");
     }
   }
 
-  void setData(String to){
-     toPhone = to;
-     print("tophone is set $toPhone");
-  }
+  // ===============================
+  // MESSAGE HANDLER
+  // ===============================
 
   void messages(dynamic data) {
     final decoded = jsonDecode(data);
 
-    // print("received: $decoded");
-
     switch (decoded['type']) {
       case 'connected':
-        print(decoded['message']);
-        Get.find<StorageService>().setWSconnected(true);
-        break;
-
-      case 'registered':
-        print(decoded['message']);
+        storage.setWSconnected(true);
         break;
 
       case 'offer':
@@ -103,104 +65,140 @@ class WebsocketServices extends GetxController {
     }
   }
 
-  //register the user
+  // ===============================
+  // INIT PEER
+  // ===============================
+
+  Future<void> _initPeerConnection(String toPhone) async {
+    peerConnection = await createPeerConnection(config);
+
+    peerConnection!.onIceConnectionState = (state) {
+      print("ICE State: $state");
+      if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+          state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+        print("🎉 CALL CONNECTED");
+      }
+      if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
+        print("❌ CALL FAILED");
+      }
+      if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+        print("⚠️ CALL DISCONNECTED");
+      }
+    };
+
+    peerConnection!.onIceCandidate = (candidate) {
+      if (candidate.candidate == null) return;
+
+      socket.sink.add(
+        jsonEncode({
+          "type": "candidate",
+          "from": self['phone'],
+          "to": toPhone,
+          "candidate": candidate.toMap(),
+        }),
+      );
+    };
+  }
+
+  // ===============================
+  // REGISTER
+  // ===============================
+
   void registerUser(Map userData) {
-    var register = {
-      "type": "register",
-      "username" : userData['username'],
-      "phone" : userData['phone']
-    };
-    socket.sink.add(jsonEncode(register));
+    socket.sink.add(
+      jsonEncode({
+        "type": "register",
+        "username": userData['username'],
+        "phone": userData['phone'],
+      }),
+    );
   }
 
-  //sendOffer to Other User
-  Future<void> createAndSendOffer(from, to) async {
+  // ===============================
+  // CREATE OFFER (Caller)
+  // ===============================
 
-    toPhone = to;
-    
-    // Create offer
-    var offer = await peerConnection.createOffer();
+  Future<void> createAndSendOffer(String from, String to) async {
+    await _initPeerConnection(to);
 
-    // Set local description (CRITICAL)
-    await peerConnection.setLocalDescription(offer);
+    final offer = await peerConnection!.createOffer();
+    await peerConnection!.setLocalDescription(offer);
 
-    //offer data
-    Map offerData = {
-      "type": "offer",
-      "from": from,
-      "to": to,
-      "offer": offer.toMap(),
-    };
-
-    socket.sink.add(jsonEncode(offerData));
+    socket.sink.add(
+      jsonEncode({
+        "type": "offer",
+        "from": from,
+        "to": to,
+        "offer": offer.toMap(),
+      }),
+    );
   }
+
+  // ===============================
+  // CREATE ANSWER (Receiver)
+  // ===============================
 
   Future<void> createAndSendAnswer(Map<String, dynamic> offer) async {
-    // 1️⃣ Set remote description (offer)
-    await peerConnection.setRemoteDescription(
-      RTCSessionDescription(
-        offer['offer']['sdp'],
-        offer['offer']['type'], // "offer"
-      ),
+    final String callerPhone = offer['from'];
+
+    await _initPeerConnection(callerPhone);
+
+    await peerConnection!.setRemoteDescription(
+      RTCSessionDescription(offer['offer']['sdp'], offer['offer']['type']),
     );
 
-    // 2️⃣ Create answer
-    RTCSessionDescription answer = await peerConnection.createAnswer();
+    final answer = await peerConnection!.createAnswer();
+    await peerConnection!.setLocalDescription(answer);
 
-    // 3️⃣ Set local description
-    await peerConnection.setLocalDescription(answer);
-
-    Map<dynamic, dynamic> payload = {
-      "type": "answer",
-      "from": self['phone'],
-      "to": offer['from'],
-      "answer": answer.toMap(),
-    };
-
-    socket.sink.add(jsonEncode(payload));
+    socket.sink.add(
+      jsonEncode({
+        "type": "answer",
+        "from": self['phone'],
+        "to": callerPhone,
+        "answer": answer.toMap(),
+      }),
+    );
   }
+
+  // ===============================
+  // HANDLE ANSWER
+  // ===============================
 
   Future<void> handleAnswer(Map<String, dynamic> answer) async {
-    try {
-      // 1️⃣ Convert JSON to RTCSessionDescription
-      RTCSessionDescription remoteAnswer = RTCSessionDescription(
-        answer['answer']['sdp'], // <-- match your server payload
-        answer['answer']['type'], // "answer"
-      );
+    if (peerConnection == null) return;
 
-      // 2️⃣ Apply remote answer
-      await peerConnection.setRemoteDescription(remoteAnswer);
-
-      print("✅ Answer applied. Connection is now stable.");
-    } catch (e) {
-      print("❌ Error handling answer: $e");
-    }
+    await peerConnection!.setRemoteDescription(
+      RTCSessionDescription(answer['answer']['sdp'], answer['answer']['type']),
+    );
   }
+
+  // ===============================
+  // HANDLE CANDIDATE
+  // ===============================
 
   Future<void> handleCandidate(Map<String, dynamic> data) async {
-    try {
-      final candidateMap = data['candidate'];
+    if (peerConnection == null) return;
 
-      print("handleCandidate: $candidateMap");
+    final candidateMap = data['candidate'];
 
-      RTCIceCandidate candidate = RTCIceCandidate(
-        candidateMap['candidate'],
-        candidateMap['sdpMid'],
-        candidateMap['sdpMLineIndex'],
-      );
+    final candidate = RTCIceCandidate(
+      candidateMap['candidate'],
+      candidateMap['sdpMid'],
+      candidateMap['sdpMLineIndex'],
+    );
 
-      await peerConnection.addCandidate(candidate);
-      print("📥 ICE candidate added");
-    } catch (e) {
-      print("❌ Error adding ICE candidate: $e");
-    }
+    await peerConnection!.addCandidate(candidate);
   }
+
+  // ===============================
+  // CLEANUP
+  // ===============================
 
   @override
   void onClose() {
-    // TODO: implement onClose
-    super.onClose();
+    peerConnection?.close();
     socket.sink.close();
-    Get.find<StorageService>().setWSconnected(false);
+    storage.setWSconnected(false);
+    super.onClose();
   }
 }

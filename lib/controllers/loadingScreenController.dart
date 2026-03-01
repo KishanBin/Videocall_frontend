@@ -17,7 +17,8 @@ class Loadingscreencontroller extends GetxController {
     super.onInit();
     final args = Get.arguments;
 
-    toPhone = args['phone'].replaceAll(' ', ''); //replase is removing
+    toPhone = args['phone'].replaceAll(' ',''); //replase is removing
+    toPhone = toPhone.replaceFirst('+91','');
     toName = args['name'];
     self = storage.user!;
     

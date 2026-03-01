@@ -7,6 +7,7 @@ import 'package:videocall_app/services/websocket_services.dart';
 class showDialogBoxController extends GetxController {
   final TextEditingController userName = TextEditingController();
   final TextEditingController phoneno = TextEditingController();
+  
   final ws = Get.find<WebsocketServices>();
 
 
